@@ -6,6 +6,7 @@ import {
   View,
   Text,
   Dimensions,
+  TouchableOpacity,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -57,6 +58,34 @@ function frequencyToNoteInfo(freq: number) {
   return {note: name, cents};
 }
 
+function manualNoteInfo(freq: number, targetIndex: number) {
+  if (freq <= 0) {
+    return {note: `${NOTE_NAMES[targetIndex]}-`, cents: 0};
+  }
+  const approx = 12 * Math.log2(freq / 440) + 69;
+  const baseOct = Math.round(approx / 12);
+  const candidates = [
+    baseOct * 12 + targetIndex,
+    (baseOct - 1) * 12 + targetIndex,
+    (baseOct + 1) * 12 + targetIndex,
+  ];
+  let best = candidates[0];
+  let bestDiff = Infinity;
+  for (const c of candidates) {
+    if (c < 21 || c > 108) continue;
+    const ideal = 440 * Math.pow(2, (c - 69) / 12);
+    const diff = Math.abs(Math.log2(freq / ideal));
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = c;
+    }
+  }
+  const name = `${NOTE_NAMES[targetIndex]}${Math.floor(best / 12 - 1)}`;
+  const ideal = 440 * Math.pow(2, (best - 69) / 12);
+  const cents = 1200 * Math.log2(freq / ideal);
+  return {note: name, cents};
+}
+
 function Waveform({data}: {data: number[]}) {
   const width = Dimensions.get('window').width;
   const height = 120;
@@ -97,18 +126,36 @@ function TuningMeter({cents}: {cents: number}) {
   );
 }
 
-function PianoKeyboard({currentNote}: {currentNote: string}) {
-  const base = currentNote.replace(/\d+/g, '');
+function PianoKeyboard({
+  highlight,
+  onSelect,
+}: {
+  highlight: string;
+  onSelect?: (name: string) => void;
+}) {
   return (
     <View style={styles.keyboardContainer}>
       {NOTE_NAMES.map(name => (
-        <PianoKey key={name} name={name} active={name === base} />
+        <PianoKey
+          key={name}
+          name={name}
+          active={name === highlight}
+          onPress={() => onSelect?.(name)}
+        />
       ))}
     </View>
   );
 }
 
-function PianoKey({name, active}: {name: string; active: boolean}) {
+function PianoKey({
+  name,
+  active,
+  onPress,
+}: {
+  name: string;
+  active: boolean;
+  onPress?: () => void;
+}) {
   const opacity = useSharedValue(active ? 1 : 0);
   useEffect(() => {
     opacity.value = withTiming(active ? 1 : 0, {duration: 80});
@@ -120,25 +167,33 @@ function PianoKey({name, active}: {name: string; active: boolean}) {
 
   const isSharp = name.includes('#');
   return (
-    <View
-      style={[
-        styles.key,
-        isSharp ? styles.blackKey : styles.whiteKey,
-      ]}>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={[styles.key, isSharp ? styles.blackKey : styles.whiteKey]}
+    >
       <Animated.View style={[styles.keyHighlight, animatedStyle]} />
-    </View>
+    </TouchableOpacity>
   );
 }
 
 function App() {
   const [frequency, setFrequency] = useState(0);
   const [wave, setWave] = useState<number[]>(new Array(FFT_SIZE).fill(0));
+  const [mode, setMode] = useState<'auto' | 'manual'>('auto');
+  const [targetIndex, setTargetIndex] = useState(9); // default to A
   const bufferRef = useRef<Float32Array>(new Float32Array(0));
   const fftRef = useRef(new FFT(FFT_SIZE));
   const hpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
   const lpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
   const smoothRef = useRef(0);
-  const noteInfo = useMemo(() => frequencyToNoteInfo(frequency), [frequency]);
+  const noteInfo = useMemo(
+    () =>
+      mode === 'auto'
+        ? frequencyToNoteInfo(frequency)
+        : manualNoteInfo(frequency, targetIndex),
+    [frequency, mode, targetIndex],
+  );
 
   useEffect(() => {
     async function init() {
@@ -233,6 +288,13 @@ function App() {
 
   return (
     <LinearGradient colors={['#0c0c0c', '#202020']} style={styles.container}>
+      <TouchableOpacity
+        style={styles.modeToggle}
+        onPress={() =>
+          setMode(current => (current === 'auto' ? 'manual' : 'auto'))
+        }>
+        <Text style={styles.modeText}>{mode === 'auto' ? 'Auto' : 'Manual'}</Text>
+      </TouchableOpacity>
       <Text style={styles.noteText}>{noteInfo.note}</Text>
       <Text style={styles.freqText}>{frequency.toFixed(1)} Hz</Text>
       <Text style={styles.centsText}>
@@ -241,7 +303,18 @@ function App() {
       </Text>
       <TuningMeter cents={noteInfo.cents} />
       <Waveform data={wave} />
-      <PianoKeyboard currentNote={noteInfo.note} />
+      <PianoKeyboard
+        highlight={
+          mode === 'auto'
+            ? noteInfo.note.replace(/\d+/g, '')
+            : NOTE_NAMES[targetIndex]
+        }
+        onSelect={
+          mode === 'manual'
+            ? name => setTargetIndex(NOTE_NAMES.indexOf(name))
+            : undefined
+        }
+      />
     </LinearGradient>
   );
 }
@@ -251,6 +324,17 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 60,
     alignItems: 'center',
+  },
+  modeToggle: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 4,
+    backgroundColor: '#444',
+    marginBottom: 20,
+  },
+  modeText: {
+    color: '#fff',
+    fontSize: 16,
   },
   noteText: {
     color: '#fff',

@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useRef, useState, useMemo} from 'react';
 import {
   PermissionsAndroid,
   Platform,
@@ -6,6 +6,7 @@ import {
   View,
   Text,
   Dimensions,
+  Animated,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import {Buffer} from 'buffer';
@@ -14,6 +15,19 @@ import Svg, {Polyline} from 'react-native-svg';
 
 const SAMPLE_RATE = 44100;
 const FFT_SIZE = 1024;
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+function frequencyToNoteInfo(freq: number) {
+  if (freq <= 0) {
+    return {note: '--', cents: 0};
+  }
+  const n = Math.round(12 * Math.log2(freq / 440) + 69);
+  const clamped = Math.min(108, Math.max(21, n));
+  const name = `${NOTE_NAMES[clamped % 12]}${Math.floor(clamped / 12 - 1)}`;
+  const ideal = 440 * Math.pow(2, (clamped - 69) / 12);
+  const cents = 1200 * Math.log2(freq / ideal);
+  return {note: name, cents};
+}
 
 function Waveform({data}: {data: number[]}) {
   const width = Dimensions.get('window').width;
@@ -30,11 +44,38 @@ function Waveform({data}: {data: number[]}) {
   );
 }
 
+const METER_WIDTH = 200;
+
+function TuningMeter({cents}: {cents: number}) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: cents,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
+  }, [cents, anim]);
+
+  const translateX = anim.interpolate({
+    inputRange: [-50, 0, 50],
+    outputRange: [-METER_WIDTH / 2, 0, METER_WIDTH / 2],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View style={styles.meterContainer}>
+      <View style={styles.meterBar} />
+      <Animated.View style={[styles.needle, {transform: [{translateX}]}]} />
+    </View>
+  );
+}
+
 function App() {
   const [frequency, setFrequency] = useState(0);
   const [wave, setWave] = useState<number[]>(new Array(FFT_SIZE).fill(0));
   const bufferRef = useRef<Float32Array>(new Float32Array(0));
   const fftRef = useRef(new FFT(FFT_SIZE));
+  const noteInfo = useMemo(() => frequencyToNoteInfo(frequency), [frequency]);
 
   useEffect(() => {
     async function init() {
@@ -104,7 +145,13 @@ function App() {
 
   return (
     <View style={styles.container}>
+      <Text style={styles.noteText}>{noteInfo.note}</Text>
       <Text style={styles.freqText}>{frequency.toFixed(1)} Hz</Text>
+      <Text style={styles.centsText}>
+        {noteInfo.cents < 0 ? '←' : noteInfo.cents > 0 ? '→' : '•'}{' '}
+        {Math.abs(noteInfo.cents).toFixed(1)} cents
+      </Text>
+      <TuningMeter cents={noteInfo.cents} />
       <Waveform data={wave} />
     </View>
   );
@@ -117,10 +164,40 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     alignItems: 'center',
   },
+  noteText: {
+    color: '#fff',
+    fontSize: 42,
+    marginBottom: 10,
+  },
   freqText: {
     color: '#fff',
     fontSize: 32,
     marginBottom: 20,
+  },
+  centsText: {
+    color: '#fff',
+    fontSize: 20,
+    marginBottom: 10,
+  },
+  meterContainer: {
+    width: METER_WIDTH,
+    height: 40,
+    marginBottom: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  meterBar: {
+    position: 'absolute',
+    top: '50%',
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: '#555',
+  },
+  needle: {
+    width: 2,
+    height: 30,
+    backgroundColor: 'red',
   },
 });
 

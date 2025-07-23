@@ -6,12 +6,17 @@ import {
   View,
   Text,
   Dimensions,
-  Animated,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  withTiming,
+  useAnimatedStyle,
+} from 'react-native-reanimated';
 import AudioRecord from 'react-native-audio-record';
 import {Buffer} from 'buffer';
 import FFT from 'fft.js';
 import Svg, {Polyline} from 'react-native-svg';
+import LinearGradient from 'react-native-linear-gradient';
 
 const SAMPLE_RATE = 44100;
 const FFT_SIZE = 1024;
@@ -44,28 +49,60 @@ function Waveform({data}: {data: number[]}) {
   );
 }
 
-const METER_WIDTH = 200;
+const GAUGE_SIZE = 220;
 
 function TuningMeter({cents}: {cents: number}) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: cents,
-      duration: 100,
-      useNativeDriver: true,
-    }).start();
-  }, [cents, anim]);
+  const value = useSharedValue(0);
 
-  const translateX = anim.interpolate({
-    inputRange: [-50, 0, 50],
-    outputRange: [-METER_WIDTH / 2, 0, METER_WIDTH / 2],
-    extrapolate: 'clamp',
+  useEffect(() => {
+    value.value = withTiming(cents, {duration: 80});
+  }, [cents, value]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const clamped = Math.max(-50, Math.min(50, value.value));
+    const rotate = (clamped / 50) * 90; // -90 to 90
+    return {
+      transform: [{rotate: `${rotate}deg`}],
+    };
   });
 
   return (
-    <View style={styles.meterContainer}>
-      <View style={styles.meterBar} />
-      <Animated.View style={[styles.needle, {transform: [{translateX}]}]} />
+    <View style={styles.gaugeContainer}>
+      <View style={styles.gaugeArc} />
+      <Animated.View style={[styles.gaugeNeedle, animatedStyle]} />
+    </View>
+  );
+}
+
+function PianoKeyboard({currentNote}: {currentNote: string}) {
+  const base = currentNote.replace(/\d+/g, '');
+  return (
+    <View style={styles.keyboardContainer}>
+      {NOTE_NAMES.map(name => (
+        <PianoKey key={name} name={name} active={name === base} />
+      ))}
+    </View>
+  );
+}
+
+function PianoKey({name, active}: {name: string; active: boolean}) {
+  const opacity = useSharedValue(active ? 1 : 0);
+  useEffect(() => {
+    opacity.value = withTiming(active ? 1 : 0, {duration: 80});
+  }, [active, opacity]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  const isSharp = name.includes('#');
+  return (
+    <View
+      style={[
+        styles.key,
+        isSharp ? styles.blackKey : styles.whiteKey,
+      ]}>
+      <Animated.View style={[styles.keyHighlight, animatedStyle]} />
     </View>
   );
 }
@@ -144,7 +181,7 @@ function App() {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <LinearGradient colors={['#0c0c0c', '#202020']} style={styles.container}>
       <Text style={styles.noteText}>{noteInfo.note}</Text>
       <Text style={styles.freqText}>{frequency.toFixed(1)} Hz</Text>
       <Text style={styles.centsText}>
@@ -153,14 +190,14 @@ function App() {
       </Text>
       <TuningMeter cents={noteInfo.cents} />
       <Waveform data={wave} />
-    </View>
+      <PianoKeyboard currentNote={noteInfo.note} />
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
     paddingTop: 60,
     alignItems: 'center',
   },
@@ -179,25 +216,53 @@ const styles = StyleSheet.create({
     fontSize: 20,
     marginBottom: 10,
   },
-  meterContainer: {
-    width: METER_WIDTH,
-    height: 40,
+  gaugeContainer: {
+    width: GAUGE_SIZE,
+    height: GAUGE_SIZE / 2,
     marginBottom: 20,
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  gaugeArc: {
+    position: 'absolute',
+    width: GAUGE_SIZE,
+    height: GAUGE_SIZE,
+    borderTopLeftRadius: GAUGE_SIZE / 2,
+    borderTopRightRadius: GAUGE_SIZE / 2,
+    borderWidth: 2,
+    borderColor: '#555',
+    borderBottomWidth: 0,
+  },
+  gaugeNeedle: {
+    width: 2,
+    height: GAUGE_SIZE / 2 - 10,
+    backgroundColor: 'red',
+    position: 'absolute',
+    bottom: 0,
+  },
+  keyboardContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    height: 80,
+    marginTop: 20,
+  },
+  key: {
+    flex: 1,
+    marginHorizontal: 1,
+    justifyContent: 'flex-end',
     alignItems: 'center',
   },
-  meterBar: {
-    position: 'absolute',
-    top: '50%',
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: '#555',
+  whiteKey: {
+    backgroundColor: '#eee',
   },
-  needle: {
-    width: 2,
-    height: 30,
-    backgroundColor: 'red',
+  blackKey: {
+    backgroundColor: '#333',
+  },
+  keyHighlight: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'orange',
+    borderRadius: 4,
   },
 });
 

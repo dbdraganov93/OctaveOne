@@ -28,6 +28,18 @@ jest.mock(
   {virtual: true},
 );
 
+jest.mock('react-native-linear-gradient', () => {
+  const React = require('react');
+  const {View} = require('react-native');
+  return React.forwardRef((props, ref) => React.createElement(View, {...props, ref}, props.children));
+});
+
+jest.mock('react-native-reanimated', () => {
+  const Reanimated = require('react-native-reanimated/mock');
+  Reanimated.default.call = () => {};
+  return Reanimated;
+});
+
 jest.mock(
   'fft.js',
   () =>

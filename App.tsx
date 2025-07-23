@@ -19,8 +19,31 @@ import Svg, {Polyline} from 'react-native-svg';
 import LinearGradient from 'react-native-linear-gradient';
 
 const SAMPLE_RATE = 44100;
-const FFT_SIZE = 1024;
+// Larger FFT improves frequency resolution but still keeps latency below 50ms
+const FFT_SIZE = 2048;
+const HP_CUTOFF = 20; // Hz
+const LP_CUTOFF = 5000; // Hz
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+type FilterState = {prevInput: number; prevOutput: number};
+
+function highPass(sample: number, state: FilterState, cutoff: number) {
+  const rc = 1 / (2 * Math.PI * cutoff);
+  const dt = 1 / SAMPLE_RATE;
+  const alpha = rc / (rc + dt);
+  const out = alpha * (state.prevOutput + sample - state.prevInput);
+  state.prevInput = sample;
+  state.prevOutput = out;
+  return out;
+}
+
+function lowPass(sample: number, state: FilterState, cutoff: number) {
+  const rc = 1 / (2 * Math.PI * cutoff);
+  const dt = 1 / SAMPLE_RATE;
+  const alpha = dt / (rc + dt);
+  state.prevOutput = state.prevOutput + alpha * (sample - state.prevOutput);
+  return state.prevOutput;
+}
 
 function frequencyToNoteInfo(freq: number) {
   if (freq <= 0) {
@@ -112,6 +135,9 @@ function App() {
   const [wave, setWave] = useState<number[]>(new Array(FFT_SIZE).fill(0));
   const bufferRef = useRef<Float32Array>(new Float32Array(0));
   const fftRef = useRef(new FFT(FFT_SIZE));
+  const hpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
+  const lpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
+  const smoothRef = useRef(0);
   const noteInfo = useMemo(() => frequencyToNoteInfo(frequency), [frequency]);
 
   useEffect(() => {
@@ -135,39 +161,64 @@ function App() {
           chunk.byteOffset,
           chunk.length / 2,
         );
-        const floats = new Float32Array(samples.length);
+        const filtered = new Float32Array(samples.length);
         for (let i = 0; i < samples.length; i++) {
-          floats[i] = samples[i] / 32768;
+          let s = samples[i] / 32768;
+          s = highPass(s, hpState.current, HP_CUTOFF);
+          s = lowPass(s, lpState.current, LP_CUTOFF);
+          filtered[i] = s;
         }
         setWave(prev => {
           const merged = Float32Array.from([
             ...prev.slice(-FFT_SIZE / 2),
-            ...Array.from(floats.slice(0, FFT_SIZE / 2)),
+            ...Array.from(filtered.slice(0, FFT_SIZE / 2)),
           ]);
           return Array.from(merged);
         });
         const current = new Float32Array(
-          bufferRef.current.length + floats.length,
+          bufferRef.current.length + filtered.length,
         );
         current.set(bufferRef.current);
-        current.set(floats, bufferRef.current.length);
+        current.set(filtered, bufferRef.current.length);
         bufferRef.current = current.slice(-FFT_SIZE);
         if (bufferRef.current.length >= FFT_SIZE) {
           const out = fftRef.current.createComplexArray();
           fftRef.current.realTransform(out, bufferRef.current);
           fftRef.current.completeSpectrum(out);
-          let maxMag = 0;
-          let maxIndex = 0;
+
+          const mags = new Float32Array(FFT_SIZE / 2);
           for (let i = 1; i < FFT_SIZE / 2; i++) {
             const re = out[2 * i];
             const im = out[2 * i + 1];
-            const mag = Math.sqrt(re * re + im * im);
-            if (mag > maxMag) {
-              maxMag = mag;
-              maxIndex = i;
+            mags[i] = Math.sqrt(re * re + im * im);
+          }
+
+          let best = 0;
+          let bestIndex = 0;
+          const limit = Math.min(mags.length, Math.floor((LP_CUTOFF * FFT_SIZE) / SAMPLE_RATE));
+          for (let i = 1; i < limit; i++) {
+            const fundamental = mags[i];
+            const second = i * 2 < mags.length ? mags[i * 2] * 0.5 : 0;
+            const third = i * 3 < mags.length ? mags[i * 3] * 0.33 : 0;
+            const score = fundamental + second + third;
+            if (score > best) {
+              best = score;
+              bestIndex = i;
             }
           }
-          setFrequency((maxIndex * SAMPLE_RATE) / FFT_SIZE);
+
+          let index = bestIndex;
+          if (index > 0 && index < mags.length - 1) {
+            const a = mags[index - 1];
+            const b = mags[index];
+            const c = mags[index + 1];
+            const p = 0.5 * (a - c) / (a - 2 * b + c);
+            index = index + p;
+          }
+
+          const detected = (index * SAMPLE_RATE) / FFT_SIZE;
+          smoothRef.current = smoothRef.current * 0.8 + detected * 0.2;
+          setFrequency(smoothRef.current);
         }
       });
 

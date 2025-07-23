@@ -40,6 +40,22 @@ jest.mock('react-native-reanimated', () => {
   return Reanimated;
 });
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn().mockResolvedValue(null),
+    setItem: jest.fn().mockResolvedValue(null),
+  },
+}));
+
+jest.mock('@react-native-community/slider', () => {
+  const React = require('react');
+  const {View} = require('react-native');
+  return React.forwardRef((props, ref) =>
+    React.createElement(View, {...props, ref}, props.children),
+  );
+});
+
 jest.mock(
   'fft.js',
   () =>

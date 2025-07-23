@@ -16,6 +16,8 @@
     "react": "19.1.0",
     "react-native": "0.80.1",
     "react-native-audio-record": "^0.2.2",
+    "@react-native-community/slider": "^5.0.0",
+    "@react-native-async-storage/async-storage": "^1.23.0",
     "react-native-linear-gradient": "^2.8.3",
     "react-native-reanimated": "^3.19.0",
     "react-native-svg": "^15.12.0"

@@ -7,6 +7,7 @@ import {
   Text,
   Dimensions,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -18,6 +19,7 @@ import {Buffer} from 'buffer';
 import FFT from 'fft.js';
 import Svg, {Polyline} from 'react-native-svg';
 import LinearGradient from 'react-native-linear-gradient';
+import SettingsModal, {loadSettings, saveSettings, Settings} from './SettingsModal';
 
 const SAMPLE_RATE = 44100;
 // Larger FFT improves frequency resolution but still keeps latency below 50ms
@@ -46,23 +48,23 @@ function lowPass(sample: number, state: FilterState, cutoff: number) {
   return state.prevOutput;
 }
 
-function frequencyToNoteInfo(freq: number) {
+function frequencyToNoteInfo(freq: number, ref: number) {
   if (freq <= 0) {
     return {note: '--', cents: 0};
   }
-  const n = Math.round(12 * Math.log2(freq / 440) + 69);
+  const n = Math.round(12 * Math.log2(freq / ref) + 69);
   const clamped = Math.min(108, Math.max(21, n));
   const name = `${NOTE_NAMES[clamped % 12]}${Math.floor(clamped / 12 - 1)}`;
-  const ideal = 440 * Math.pow(2, (clamped - 69) / 12);
+  const ideal = ref * Math.pow(2, (clamped - 69) / 12);
   const cents = 1200 * Math.log2(freq / ideal);
   return {note: name, cents};
 }
 
-function manualNoteInfo(freq: number, targetIndex: number) {
+function manualNoteInfo(freq: number, targetIndex: number, ref: number) {
   if (freq <= 0) {
     return {note: `${NOTE_NAMES[targetIndex]}-`, cents: 0};
   }
-  const approx = 12 * Math.log2(freq / 440) + 69;
+  const approx = 12 * Math.log2(freq / ref) + 69;
   const baseOct = Math.round(approx / 12);
   const candidates = [
     baseOct * 12 + targetIndex,
@@ -73,7 +75,7 @@ function manualNoteInfo(freq: number, targetIndex: number) {
   let bestDiff = Infinity;
   for (const c of candidates) {
     if (c < 21 || c > 108) continue;
-    const ideal = 440 * Math.pow(2, (c - 69) / 12);
+    const ideal = ref * Math.pow(2, (c - 69) / 12);
     const diff = Math.abs(Math.log2(freq / ideal));
     if (diff < bestDiff) {
       bestDiff = diff;
@@ -81,7 +83,7 @@ function manualNoteInfo(freq: number, targetIndex: number) {
     }
   }
   const name = `${NOTE_NAMES[targetIndex]}${Math.floor(best / 12 - 1)}`;
-  const ideal = 440 * Math.pow(2, (best - 69) / 12);
+  const ideal = ref * Math.pow(2, (best - 69) / 12);
   const cents = 1200 * Math.log2(freq / ideal);
   return {note: name, cents};
 }
@@ -182,25 +184,39 @@ function App() {
   const [wave, setWave] = useState<number[]>(new Array(FFT_SIZE).fill(0));
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [targetIndex, setTargetIndex] = useState(9); // default to A
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsVisible, setSettingsVisible] = useState(false);
   const bufferRef = useRef<Float32Array>(new Float32Array(0));
   const fftRef = useRef(new FFT(FFT_SIZE));
   const hpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
   const lpState = useRef<FilterState>({prevInput: 0, prevOutput: 0});
   const smoothRef = useRef(0);
+  useEffect(() => {
+    loadSettings().then(setSettings);
+  }, []);
   const noteInfo = useMemo(
     () =>
       mode === 'auto'
-        ? frequencyToNoteInfo(frequency)
-        : manualNoteInfo(frequency, targetIndex),
-    [frequency, mode, targetIndex],
+        ? frequencyToNoteInfo(frequency, settings?.referencePitch ?? 440)
+        : manualNoteInfo(frequency, targetIndex, settings?.referencePitch ?? 440),
+    [frequency, mode, targetIndex, settings?.referencePitch],
   );
 
   useEffect(() => {
     async function init() {
-      if (Platform.OS === 'android') {
-        await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        );
+      async function requestMicrophone() {
+        if (Platform.OS === 'android') {
+          const result = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          );
+          return result === PermissionsAndroid.RESULTS.GRANTED;
+        }
+        return true;
+      }
+
+      if (!(await requestMicrophone())) {
+        Alert.alert('Microphone permission required');
+        return;
       }
       AudioRecord.init({
         sampleRate: SAMPLE_RATE,
@@ -209,18 +225,24 @@ function App() {
         wavFile: 'tmp.wav',
       });
 
+      const temp = {samples: new Int16Array(0), filtered: new Float32Array(0)};
+
       AudioRecord.on('data', data => {
         const chunk = Buffer.from(data, 'base64');
-        const samples = new Int16Array(
-          chunk.buffer,
-          chunk.byteOffset,
-          chunk.length / 2,
+        if (temp.samples.length !== chunk.length / 2) {
+          temp.samples = new Int16Array(chunk.length / 2);
+          temp.filtered = new Float32Array(chunk.length / 2);
+        }
+        temp.samples.set(
+          new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2),
         );
-        const filtered = new Float32Array(samples.length);
+        const {samples, filtered} = temp;
         for (let i = 0; i < samples.length; i++) {
           let s = samples[i] / 32768;
-          s = highPass(s, hpState.current, HP_CUTOFF);
-          s = lowPass(s, lpState.current, LP_CUTOFF);
+          if (settings?.noiseFilter !== false) {
+            s = highPass(s, hpState.current, HP_CUTOFF);
+            s = lowPass(s, lpState.current, LP_CUTOFF);
+          }
           filtered[i] = s;
         }
         setWave(prev => {
@@ -286,18 +308,36 @@ function App() {
     };
   }, []);
 
+  if (!settings) {
+    return null;
+  }
+
+  const gradientColors = settings.darkTheme
+    ? ['#0c0c0c', '#202020']
+    : ['#fafafa', '#e0e0e0'];
+  const textColor = settings.darkTheme ? '#fff' : '#000';
+
   return (
-    <LinearGradient colors={['#0c0c0c', '#202020']} style={styles.container}>
+    <LinearGradient
+      colors={gradientColors}
+      style={styles.container}>
+      <TouchableOpacity
+        style={styles.settingsToggle}
+        onPress={() => setSettingsVisible(true)}>
+        <Text style={[styles.modeText, {color: textColor}]}>⚙</Text>
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.modeToggle}
         onPress={() =>
           setMode(current => (current === 'auto' ? 'manual' : 'auto'))
         }>
-        <Text style={styles.modeText}>{mode === 'auto' ? 'Auto' : 'Manual'}</Text>
+        <Text style={[styles.modeText, {color: textColor}]}>
+          {mode === 'auto' ? 'Auto' : 'Manual'}
+        </Text>
       </TouchableOpacity>
-      <Text style={styles.noteText}>{noteInfo.note}</Text>
-      <Text style={styles.freqText}>{frequency.toFixed(1)} Hz</Text>
-      <Text style={styles.centsText}>
+      <Text style={[styles.noteText, {color: textColor}]}>{noteInfo.note}</Text>
+      <Text style={[styles.freqText, {color: textColor}]}>{frequency.toFixed(1)} Hz</Text>
+      <Text style={[styles.centsText, {color: textColor}]}>
         {noteInfo.cents < 0 ? '←' : noteInfo.cents > 0 ? '→' : '•'}{' '}
         {Math.abs(noteInfo.cents).toFixed(1)} cents
       </Text>
@@ -315,6 +355,15 @@ function App() {
             : undefined
         }
       />
+      <SettingsModal
+        visible={settingsVisible}
+        initial={settings}
+        onClose={s => {
+          setSettings(s);
+          saveSettings(s);
+          setSettingsVisible(false);
+        }}
+      />
     </LinearGradient>
   );
 }
@@ -325,6 +374,12 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     alignItems: 'center',
   },
+  settingsToggle: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    padding: 6,
+  },
   modeToggle: {
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -333,21 +388,17 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modeText: {
-    color: '#fff',
     fontSize: 16,
   },
   noteText: {
-    color: '#fff',
     fontSize: 42,
     marginBottom: 10,
   },
   freqText: {
-    color: '#fff',
     fontSize: 32,
     marginBottom: 20,
   },
   centsText: {
-    color: '#fff',
     fontSize: 20,
     marginBottom: 10,
   },

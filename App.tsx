@@ -306,7 +306,7 @@ function App() {
     return () => {
       AudioRecord.stop();
     };
-  }, []);
+  }, [settings?.noiseFilter]);
 
   if (!settings) {
     return null;

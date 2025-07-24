@@ -4,6 +4,23 @@ This is a new [**React Native**](https://reactnative.dev) project, bootstrapped 
 
 > **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
 
+## Step 0: Install dependencies
+
+Clone the repository and install the JavaScript and native dependencies:
+
+```sh
+npm install
+
+# For iOS only
+(cd ios && bundle install && bundle exec pod install)
+```
+
+The project comes preconfigured with [react-native-reanimated](https://docs.swmansion.com/react-native-reanimated/). If Metro complains about worklets when you run the app, restart it with a cleared cache:
+
+```sh
+npx react-native start --reset-cache
+```
+
 ## Step 1: Start Metro
 
 First, you will need to run **Metro**, the JavaScript build tool for React Native.

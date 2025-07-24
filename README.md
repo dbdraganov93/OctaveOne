@@ -43,6 +43,9 @@ With Metro running, open a new terminal window/pane from the root of your React 
 
 ### Android
 
+Run `./run_android.sh` to start Metro and launch the Android emulator. Use `./run_android.sh apk` to build a release APK.
+
+
 ```sh
 # Using npm
 npm run android

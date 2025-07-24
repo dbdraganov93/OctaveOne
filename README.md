@@ -15,11 +15,8 @@ npm install
 (cd ios && bundle install && bundle exec pod install)
 ```
 
-The project uses [react-native-reanimated](https://docs.swmansion.com/react-native-reanimated/) for animations. If Metro complains about worklets when you run the app, rebuild and restart Metro with a cleared cache:
-
-```sh
-npx react-native start --reset-cache
-```
+Animations in this project rely on React Native's built‑in `Animated` API, so no
+extra native modules are required.
 
 
 

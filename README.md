@@ -15,19 +15,13 @@ npm install
 (cd ios && bundle install && bundle exec pod install)
 ```
 
-The project uses [react-native-worklets](https://docs.swmansion.com/react-native-worklets/) together with [react-native-reanimated](https://docs.swmansion.com/react-native-reanimated/). If Metro complains about worklets when you run the app, rebuild and restart Metro with a cleared cache:
+The project uses [react-native-reanimated](https://docs.swmansion.com/react-native-reanimated/) for animations. If Metro complains about worklets when you run the app, rebuild and restart Metro with a cleared cache:
 
 ```sh
 npx react-native start --reset-cache
 ```
 
-Worklets must be initialized before Reanimated. The default `index.js` already
-imports `react-native-worklets` followed by `react-native-reanimated`:
 
-```javascript
-import 'react-native-worklets';
-import 'react-native-reanimated';
-```
 
 ## Step 1: Start Metro
 

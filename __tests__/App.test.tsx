@@ -41,7 +41,6 @@ jest.mock('react-native-reanimated', () => {
   return Reanimated;
 });
 
-jest.mock('react-native-worklets', () => ({}), {virtual: true});
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,

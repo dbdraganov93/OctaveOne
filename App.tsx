@@ -8,12 +8,8 @@ import {
   Dimensions,
   TouchableOpacity,
   Alert,
+  Animated,
 } from 'react-native';
-import Animated, {
-  useSharedValue,
-  withTiming,
-  useAnimatedStyle,
-} from 'react-native-reanimated';
 import AudioRecord from 'react-native-audio-record';
 import {Buffer} from 'buffer';
 import FFT from 'fft.js';
@@ -106,19 +102,25 @@ function Waveform({data}: {data: number[]}) {
 const GAUGE_SIZE = 220;
 
 function TuningMeter({cents}: {cents: number}) {
-  const value = useSharedValue(0);
+  const value = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    value.value = withTiming(cents, {duration: 80});
+    Animated.timing(value, {
+      toValue: cents,
+      duration: 80,
+      useNativeDriver: true,
+    }).start();
   }, [cents, value]);
 
-  const animatedStyle = useAnimatedStyle(() => {
-    const clamped = Math.max(-50, Math.min(50, value.value));
-    const rotate = (clamped / 50) * 90; // -90 to 90
-    return {
-      transform: [{rotate: `${rotate}deg`}],
-    };
+  const rotate = value.interpolate({
+    inputRange: [-50, 50],
+    outputRange: ['-90deg', '90deg'],
+    extrapolate: 'clamp',
   });
+
+  const animatedStyle = {
+    transform: [{rotate}],
+  } as const;
 
   return (
     <View style={styles.gaugeContainer}>
@@ -158,14 +160,16 @@ function PianoKey({
   active: boolean;
   onPress?: () => void;
 }) {
-  const opacity = useSharedValue(active ? 1 : 0);
+  const opacity = useRef(new Animated.Value(active ? 1 : 0)).current;
   useEffect(() => {
-    opacity.value = withTiming(active ? 1 : 0, {duration: 80});
+    Animated.timing(opacity, {
+      toValue: active ? 1 : 0,
+      duration: 80,
+      useNativeDriver: true,
+    }).start();
   }, [active, opacity]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
+  const animatedStyle = {opacity} as const;
 
   const isSharp = name.includes('#');
   return (
